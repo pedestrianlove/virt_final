@@ -11,7 +11,7 @@ python pytorch.py
 ```bash
 conda create -n your_env tensorflow-gpu nccl -c conda-forge
 conda activate your_env
-XLA_FLAGS=--xla_gpu_cuda_data_dir=$CONDA_PREFIX python tf.py --gpus 4
+TF_CPP_MIN_LOG_LEVEL=3 XLA_FLAGS=--xla_gpu_cuda_data_dir=$CONDA_PREFIX python tf.py --gpus 4
 ```
 
 
