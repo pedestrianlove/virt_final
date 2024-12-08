@@ -1,8 +1,10 @@
+import optree
 import tensorflow as tf
 import time
 import argparse
 import os
 import numpy as np
+import tensorflow_datasets as tfds
 
 # Parse command line arguments
 parser = argparse.ArgumentParser(description="TensorFlow Multi-GPU Training")
@@ -22,35 +24,39 @@ for gpu in gpus[:args.gpus]:
 # Define a simple model and dataset
 def create_model():
     model = tf.keras.Sequential([
-        tf.keras.layers.Flatten(input_shape=(32, 32, 3)),  # Flatten the input to match Dense layers
-        tf.keras.layers.Dense(1024, activation='relu'),
-        tf.keras.layers.Dense(512, activation='relu'),
-        tf.keras.layers.Dense(10, activation='softmax')
+        tf.keras.layers.Conv2D(32, 3, activation='relu', input_shape=(28, 28, 1)),
+        tf.keras.layers.MaxPooling2D(),
+        tf.keras.layers.Flatten(),
+        tf.keras.layers.Dense(64, activation='relu'),
+        tf.keras.layers.Dense(10)
     ])
     return model
 
 def create_large_dataset(BATCH_MULTIPLIER = 1):
-    # Generate a synthetic large dataset
-    num_samples = 100000  # Increase the number of samples to make the dataset larger
-    x_train = np.random.rand(num_samples, 32, 32, 3).astype('float32')
-    y_train = np.random.randint(0, 10, size=(num_samples,))
-    y_train = tf.keras.utils.to_categorical(y_train, 10)
-    dataset = tf.data.Dataset.from_tensor_slices((x_train, y_train))
-    dataset = dataset.shuffle(10000).batch(10240 * BATCH_MULTIPLIER).prefetch(tf.data.AUTOTUNE)
-    return dataset
+    def scale(image, label):
+      image = tf.cast(image, tf.float32)
+      image /= 255
+
+      return image, label
+
+    datasets, info = tfds.load(name='mnist', with_info=True, as_supervised=True)
+    mnist_train, mnist_test = datasets['train'], datasets['test']
+    train = mnist_train.map(scale).cache().shuffle(10000).batch(64 * BATCH_MULTIPLIER)
+    test = mnist_test.map(scale).batch(1024 * BATCH_MULTIPLIER)
+    return train, test
 
 # Train the model and measure performance
 def train_model(model, dataset, epochs=5):
-    model.compile(optimizer='adam',
-                  loss='categorical_crossentropy',
-                  metrics=['accuracy'])
+    model.compile(loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+                optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
+                metrics=['accuracy'])
     start_time = time.time()
     model.fit(dataset, epochs=epochs, verbose=0)
     end_time = time.time()
     return end_time - start_time
 
 # Multi-GPU Training using Strategy
-def multi_gpu_training(dataset):
+def multi_gpu_training(dataset, test_data):
     print(f"Training on {args.gpus} GPUs using tf.distribute.Strategy...")
     strategy = tf.distribute.MirroredStrategy()
     print(f"Using {strategy.num_replicas_in_sync} devices for training.")
@@ -58,22 +64,31 @@ def multi_gpu_training(dataset):
     with strategy.scope():
         model = create_model()
         duration = train_model(model, dataset)
-    print(f"Multi-GPU training completed in {duration:.2f} seconds.")
+    print(f"{args.gpus} GPUs Training Time: {duration:.2f} seconds.")
+
+    # Validation
+    eval_loss, eval_acc = model.evaluate(test_data)
+    print('Eval loss: {}, Eval accuracy: {}'.format(eval_loss, eval_acc))
     return duration
 
 # Main logic
 if args.gpus == 1:
     print("Generating dataset...")
-    dataset = create_large_dataset(1)
+    train_data, test_data = create_large_dataset(1)
     print("Training on a single GPU...")
     with tf.device('/GPU:0'):
         model = create_model()
-        duration = train_model(model, dataset)
+        duration = train_model(model, train_data)
     print(f"Single GPU training completed in {duration:.2f} seconds.")
+
+    # Validation
+    eval_loss, eval_acc = model.evaluate(test_data)
+    print('Eval loss: {}, Eval accuracy: {}'.format(eval_loss, eval_acc))
 elif args.gpus > 1:
     print("Generating dataset...")
-    dataset = create_large_dataset(args.gpus)
-    multi_gpu_time = multi_gpu_training(dataset)
-    print(f"{args.gpus} GPUs Training Time: {multi_gpu_time:.2f} seconds.")
+    train_data, test_data = create_large_dataset(args.gpus)
+    multi_gpu_time = multi_gpu_training(train_data, test_data)
+
 else:
     print("Invalid number of GPUs specified.")
+
