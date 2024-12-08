@@ -51,13 +51,17 @@ def train_model(model, dataset, epochs=5):
                 optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
                 metrics=['accuracy'])
     start_time = time.time()
-    model.fit(dataset, epochs=epochs, verbose=0)
+    model.fit(dataset, epochs=epochs, verbose=1)
     end_time = time.time()
     return end_time - start_time
 
 # Multi-GPU Training using Strategy
 def multi_gpu_training(dataset, test_data):
     print(f"Training on {args.gpus} GPUs using tf.distribute.Strategy...")
+    # communication_options = tf.distribute.experimental.CommunicationOptions(
+    #     implementation=tf.distribute.experimental.CommunicationImplementation.NCCL)
+    # strategy = tf.distribute.MultiWorkerMirroredStrategy(
+    #     communication_options=communication_options)
     strategy = tf.distribute.MirroredStrategy()
     print(f"Using {strategy.num_replicas_in_sync} devices for training.")
 
